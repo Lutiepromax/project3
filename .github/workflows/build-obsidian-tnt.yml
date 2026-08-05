@@ -52,11 +52,16 @@ jobs:
                   if line.startswith('          '):
                       lines.append(line[10:])
                   else:
-                      # Some embedded Python triple-quote delimiters in the
-                      # stored builder intentionally begin at column zero.
                       lines.append(line)
+
+              script_text = '\n'.join(lines) + '\n'
+              if index == 2:
+                  # Text written on the same line as an opening Python triple
+                  # quote did not pass through YAML's ten-space block-strip.
+                  script_text = script_text.replace("'''          ", "'''")
+
               script = Path(f'/tmp/v120-step-{index}.sh')
-              script.write_text('\n'.join(lines) + '\n')
+              script.write_text(script_text)
               subprocess.run(['bash', str(script)], check=True)
           PY
 
