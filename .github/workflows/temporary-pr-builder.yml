@@ -1,0 +1,25 @@
+name: Temporary PR Artifact Builder
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build fixed mod
+        shell: bash
+        run: bash build-v121.sh
+      - name: Upload fixed JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: ObsidianTNT-1.16.5-1.2.1
+          path: artifact-v121/ObsidianTNT-1.16.5-1.2.1.jar
+          if-no-files-found: error
