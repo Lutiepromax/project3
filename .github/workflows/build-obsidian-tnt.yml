@@ -1,0 +1,652 @@
+name: Build Obsidian TNT
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17 for Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Create and build Forge 1.16.5 mod
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL "https://maven.minecraftforge.net/net/minecraftforge/forge/1.16.5-36.2.42/forge-1.16.5-36.2.42-mdk.zip" -o /tmp/forge-mdk.zip
+          rm -rf forge-work
+          mkdir forge-work
+          unzip -q /tmp/forge-mdk.zip -d forge-work
+
+          sed -i 's/^mod_id=.*/mod_id=obsidiantnt/' forge-work/gradle.properties
+          sed -i 's/^mod_name=.*/mod_name=Obsidian TNT/' forge-work/gradle.properties
+          sed -i 's/^mod_license=.*/mod_license=All Rights Reserved/' forge-work/gradle.properties
+          sed -i 's/^mod_version=.*/mod_version=1.1.0/' forge-work/gradle.properties
+          sed -i 's/^mod_group_id=.*/mod_group_id=com.radel.obsidiantnt/' forge-work/gradle.properties
+          sed -i 's/^mod_authors=.*/mod_authors=Radel/' forge-work/gradle.properties
+          sed -i 's/^mod_description=.*/mod_description=Tenfold TNT with directional blast absorption and staged obsidian durability./' forge-work/gradle.properties
+
+          rm -rf forge-work/src
+          mkdir -p forge-work/src/main/java/com/radel/obsidiantnt
+          mkdir -p forge-work/src/main/resources/META-INF
+          mkdir -p forge-work/src/main/resources/assets/obsidiantnt/{blockstates,lang,models/block,models/item,textures/block}
+          mkdir -p forge-work/src/main/resources/data/obsidiantnt/{recipes,loot_tables/blocks}
+
+          cat > forge-work/src/main/java/com/radel/obsidiantnt/ObsidianTNTMod.java <<'JAVA'
+          package com.radel.obsidiantnt;
+
+          import net.minecraft.block.AbstractBlock;
+          import net.minecraft.block.Block;
+          import net.minecraft.block.BlockState;
+          import net.minecraft.block.Blocks;
+          import net.minecraft.block.TNTBlock;
+          import net.minecraft.client.renderer.RenderType;
+          import net.minecraft.client.renderer.RenderTypeLookup;
+          import net.minecraft.client.renderer.entity.TNTRenderer;
+          import net.minecraft.entity.EntityClassification;
+          import net.minecraft.entity.EntityType;
+          import net.minecraft.entity.LivingEntity;
+          import net.minecraft.entity.item.TNTEntity;
+          import net.minecraft.item.BlockItem;
+          import net.minecraft.item.Item;
+          import net.minecraft.item.ItemGroup;
+          import net.minecraft.util.Direction;
+          import net.minecraft.util.SoundCategory;
+          import net.minecraft.util.SoundEvents;
+          import net.minecraft.util.math.BlockPos;
+          import net.minecraft.world.Explosion;
+          import net.minecraft.world.World;
+          import net.minecraftforge.api.distmarker.Dist;
+          import net.minecraftforge.eventbus.api.IEventBus;
+          import net.minecraftforge.eventbus.api.SubscribeEvent;
+          import net.minecraftforge.fml.RegistryObject;
+          import net.minecraftforge.fml.client.registry.RenderingRegistry;
+          import net.minecraftforge.fml.common.Mod;
+          import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
+          import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+          import net.minecraftforge.registries.DeferredRegister;
+          import net.minecraftforge.registries.ForgeRegistries;
+
+          import javax.annotation.Nullable;
+          import java.util.ArrayList;
+          import java.util.List;
+
+          @Mod(ObsidianTNTMod.MOD_ID)
+          public final class ObsidianTNTMod {
+              public static final String MOD_ID = "obsidiantnt";
+
+              private static final DeferredRegister<Block> BLOCKS =
+                      DeferredRegister.create(ForgeRegistries.BLOCKS, MOD_ID);
+              private static final DeferredRegister<Item> ITEMS =
+                      DeferredRegister.create(ForgeRegistries.ITEMS, MOD_ID);
+              private static final DeferredRegister<EntityType<?>> ENTITIES =
+                      DeferredRegister.create(ForgeRegistries.ENTITIES, MOD_ID);
+
+              public static final RegistryObject<Block> POWER_TNT = BLOCKS.register(
+                      "power_tnt",
+                      () -> new PowerTNTBlock(AbstractBlock.Properties.copy(Blocks.TNT))
+              );
+
+              public static final RegistryObject<Block> DAMAGED_CRYING_OBSIDIAN_2 = BLOCKS.register(
+                      "damaged_crying_obsidian_2",
+                      () -> new DamagedAbsorberBlock(AbstractBlock.Properties.copy(Blocks.CRYING_OBSIDIAN))
+              );
+              public static final RegistryObject<Block> DAMAGED_CRYING_OBSIDIAN_1 = BLOCKS.register(
+                      "damaged_crying_obsidian_1",
+                      () -> new DamagedAbsorberBlock(AbstractBlock.Properties.copy(Blocks.CRYING_OBSIDIAN))
+              );
+              public static final RegistryObject<Block> DAMAGED_ANCIENT_DEBRIS_3 = BLOCKS.register(
+                      "damaged_ancient_debris_3",
+                      () -> new DamagedAbsorberBlock(AbstractBlock.Properties.copy(Blocks.ANCIENT_DEBRIS))
+              );
+              public static final RegistryObject<Block> DAMAGED_ANCIENT_DEBRIS_2 = BLOCKS.register(
+                      "damaged_ancient_debris_2",
+                      () -> new DamagedAbsorberBlock(AbstractBlock.Properties.copy(Blocks.ANCIENT_DEBRIS))
+              );
+              public static final RegistryObject<Block> DAMAGED_ANCIENT_DEBRIS_1 = BLOCKS.register(
+                      "damaged_ancient_debris_1",
+                      () -> new DamagedAbsorberBlock(AbstractBlock.Properties.copy(Blocks.ANCIENT_DEBRIS))
+              );
+
+              public static final RegistryObject<Item> POWER_TNT_ITEM = ITEMS.register(
+                      "power_tnt",
+                      () -> new BlockItem(POWER_TNT.get(), new Item.Properties().tab(ItemGroup.TAB_REDSTONE))
+              );
+
+              public static final RegistryObject<EntityType<PowerTNTEntity>> POWER_TNT_ENTITY = ENTITIES.register(
+                      "power_tnt",
+                      () -> EntityType.Builder.<PowerTNTEntity>of(PowerTNTEntity::new, EntityClassification.MISC)
+                              .sized(0.98F, 0.98F)
+                              .clientTrackingRange(10)
+                              .updateInterval(10)
+                              .build(MOD_ID + ":power_tnt")
+              );
+
+              public ObsidianTNTMod() {
+                  IEventBus bus = FMLJavaModLoadingContext.get().getModEventBus();
+                  BLOCKS.register(bus);
+                  ITEMS.register(bus);
+                  ENTITIES.register(bus);
+              }
+
+              public static final class DamagedAbsorberBlock extends Block {
+                  public DamagedAbsorberBlock(AbstractBlock.Properties properties) {
+                      super(properties);
+                  }
+              }
+
+              public static final class PowerTNTBlock extends TNTBlock {
+                  public PowerTNTBlock(AbstractBlock.Properties properties) {
+                      super(properties);
+                  }
+
+                  @Override
+                  public void catchFire(BlockState state, World world, BlockPos pos,
+                                        @Nullable Direction face, @Nullable LivingEntity igniter) {
+                      if (!world.isClientSide) {
+                          PowerTNTEntity tnt = new PowerTNTEntity(
+                                  world,
+                                  pos.getX() + 0.5D,
+                                  pos.getY(),
+                                  pos.getZ() + 0.5D,
+                                  igniter
+                          );
+                          world.addFreshEntity(tnt);
+                          world.playSound(null, tnt.getX(), tnt.getY(), tnt.getZ(),
+                                  SoundEvents.TNT_PRIMED, SoundCategory.BLOCKS, 1.0F, 1.0F);
+                      }
+                  }
+
+                  @Override
+                  public void wasExploded(World world, BlockPos pos, Explosion explosion) {
+                      if (!world.isClientSide) {
+                          PowerTNTEntity tnt = new PowerTNTEntity(
+                                  world,
+                                  pos.getX() + 0.5D,
+                                  pos.getY(),
+                                  pos.getZ() + 0.5D,
+                                  explosion.getSourceMob()
+                          );
+                          int fuse = tnt.getFuse();
+                          tnt.setFuse(world.random.nextInt(Math.max(1, fuse / 4)) + Math.max(1, fuse / 8));
+                          world.addFreshEntity(tnt);
+                      }
+                  }
+              }
+
+              public static final class PowerTNTEntity extends TNTEntity {
+                  private static final float STRONG_POWER = 40.0F;
+                  private static final double ABSORBER_DAMAGE_RADIUS = 4.0D;
+                  private static final double RAY_SAMPLE_STEP = 0.05D;
+
+                  @Nullable
+                  private LivingEntity customOwner;
+
+                  public PowerTNTEntity(EntityType<? extends PowerTNTEntity> type, World world) {
+                      super(type, world);
+                  }
+
+                  public PowerTNTEntity(World world, double x, double y, double z,
+                                        @Nullable LivingEntity owner) {
+                      this(POWER_TNT_ENTITY.get(), world);
+                      this.setPos(x, y, z);
+
+                      double angle = world.random.nextDouble() * Math.PI * 2.0D;
+                      this.setDeltaMovement(-Math.sin(angle) * 0.02D, 0.2D, -Math.cos(angle) * 0.02D);
+                      this.setFuse(80);
+                      this.xo = x;
+                      this.yo = y;
+                      this.zo = z;
+                      this.customOwner = owner;
+                  }
+
+                  @Override
+                  @Nullable
+                  public LivingEntity getOwner() {
+                      return customOwner != null ? customOwner : super.getOwner();
+                  }
+
+                  @Override
+                  protected void explode() {
+                      double centerX = this.getX();
+                      double centerY = this.getY(0.0625D);
+                      double centerZ = this.getZ();
+
+                      List<BlockPos> exposedAbsorbers = findExposedAbsorbers(centerX, centerY, centerZ);
+
+                      // The strong explosion always happens. Obsidian-like blocks remain in place
+                      // while vanilla calculates blast rays, so they absorb only the rays behind them.
+                      this.level.explode(this, centerX, centerY, centerZ, STRONG_POWER, Explosion.Mode.BREAK);
+
+                      // Each exposed absorber receives exactly one durability hit per super TNT.
+                      for (BlockPos pos : exposedAbsorbers) {
+                          damageAbsorber(pos);
+                      }
+                  }
+
+                  private List<BlockPos> findExposedAbsorbers(double centerX, double centerY, double centerZ) {
+                      List<BlockPos> result = new ArrayList<>();
+                      int radius = (int) Math.ceil(ABSORBER_DAMAGE_RADIUS);
+                      int baseX = (int) Math.floor(centerX);
+                      int baseY = (int) Math.floor(centerY);
+                      int baseZ = (int) Math.floor(centerZ);
+                      double radiusSquared = ABSORBER_DAMAGE_RADIUS * ABSORBER_DAMAGE_RADIUS;
+
+                      for (int x = baseX - radius; x <= baseX + radius; x++) {
+                          for (int y = baseY - radius; y <= baseY + radius; y++) {
+                              for (int z = baseZ - radius; z <= baseZ + radius; z++) {
+                                  double dx = x + 0.5D - centerX;
+                                  double dy = y + 0.5D - centerY;
+                                  double dz = z + 0.5D - centerZ;
+                                  if (dx * dx + dy * dy + dz * dz > radiusSquared) {
+                                      continue;
+                                  }
+
+                                  BlockPos target = new BlockPos(x, y, z);
+                                  if (!isAbsorber(this.level.getBlockState(target))) {
+                                      continue;
+                                  }
+
+                                  if (!hasAbsorberBeforeTarget(centerX, centerY, centerZ, target)) {
+                                      result.add(target);
+                                  }
+                              }
+                          }
+                      }
+                      return result;
+                  }
+
+                  private boolean hasAbsorberBeforeTarget(double centerX, double centerY, double centerZ,
+                                                           BlockPos target) {
+                      double targetX = target.getX() + 0.5D;
+                      double targetY = target.getY() + 0.5D;
+                      double targetZ = target.getZ() + 0.5D;
+                      double dx = targetX - centerX;
+                      double dy = targetY - centerY;
+                      double dz = targetZ - centerZ;
+                      double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                      int steps = Math.max(1, (int) Math.ceil(distance / RAY_SAMPLE_STEP));
+
+                      BlockPos previousSample = null;
+                      for (int step = 1; step < steps; step++) {
+                          double progress = step / (double) steps;
+                          BlockPos sample = new BlockPos(
+                                  centerX + dx * progress,
+                                  centerY + dy * progress,
+                                  centerZ + dz * progress
+                          );
+
+                          if (sample.equals(target)) {
+                              return false;
+                          }
+                          if (sample.equals(previousSample)) {
+                              continue;
+                          }
+                          previousSample = sample;
+
+                          if (isAbsorber(this.level.getBlockState(sample))) {
+                              return true;
+                          }
+                      }
+                      return false;
+                  }
+
+                  private boolean isAbsorber(BlockState state) {
+                      return state.is(Blocks.OBSIDIAN)
+                              || state.is(Blocks.CRYING_OBSIDIAN)
+                              || state.is(Blocks.ANCIENT_DEBRIS)
+                              || state.is(DAMAGED_CRYING_OBSIDIAN_2.get())
+                              || state.is(DAMAGED_CRYING_OBSIDIAN_1.get())
+                              || state.is(DAMAGED_ANCIENT_DEBRIS_3.get())
+                              || state.is(DAMAGED_ANCIENT_DEBRIS_2.get())
+                              || state.is(DAMAGED_ANCIENT_DEBRIS_1.get());
+                  }
+
+                  private void damageAbsorber(BlockPos pos) {
+                      BlockState state = this.level.getBlockState(pos);
+
+                      if (state.is(Blocks.OBSIDIAN)) {
+                          this.level.destroyBlock(pos, false);
+                          return;
+                      }
+
+                      // Crying obsidian: 3 hits total. Digits show the remaining hits.
+                      if (state.is(Blocks.CRYING_OBSIDIAN)) {
+                          this.level.setBlockAndUpdate(pos, DAMAGED_CRYING_OBSIDIAN_2.get().defaultBlockState());
+                      } else if (state.is(DAMAGED_CRYING_OBSIDIAN_2.get())) {
+                          this.level.setBlockAndUpdate(pos, DAMAGED_CRYING_OBSIDIAN_1.get().defaultBlockState());
+                      } else if (state.is(DAMAGED_CRYING_OBSIDIAN_1.get())) {
+                          this.level.destroyBlock(pos, false);
+                      }
+
+                      // Ancient debris: 4 hits total. Digits show 3, 2, 1 remaining.
+                      else if (state.is(Blocks.ANCIENT_DEBRIS)) {
+                          this.level.setBlockAndUpdate(pos, DAMAGED_ANCIENT_DEBRIS_3.get().defaultBlockState());
+                      } else if (state.is(DAMAGED_ANCIENT_DEBRIS_3.get())) {
+                          this.level.setBlockAndUpdate(pos, DAMAGED_ANCIENT_DEBRIS_2.get().defaultBlockState());
+                      } else if (state.is(DAMAGED_ANCIENT_DEBRIS_2.get())) {
+                          this.level.setBlockAndUpdate(pos, DAMAGED_ANCIENT_DEBRIS_1.get().defaultBlockState());
+                      } else if (state.is(DAMAGED_ANCIENT_DEBRIS_1.get())) {
+                          this.level.destroyBlock(pos, false);
+                      }
+                  }
+              }
+
+              @Mod.EventBusSubscriber(modid = MOD_ID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
+              public static final class ClientEvents {
+                  private ClientEvents() {
+                  }
+
+                  @SubscribeEvent
+                  public static void onClientSetup(FMLClientSetupEvent event) {
+                      event.enqueueWork(() -> {
+                          RenderingRegistry.registerEntityRenderingHandler(POWER_TNT_ENTITY.get(), TNTRenderer::new);
+                          RenderTypeLookup.setRenderLayer(DAMAGED_CRYING_OBSIDIAN_2.get(), RenderType.cutout());
+                          RenderTypeLookup.setRenderLayer(DAMAGED_CRYING_OBSIDIAN_1.get(), RenderType.cutout());
+                          RenderTypeLookup.setRenderLayer(DAMAGED_ANCIENT_DEBRIS_3.get(), RenderType.cutout());
+                          RenderTypeLookup.setRenderLayer(DAMAGED_ANCIENT_DEBRIS_2.get(), RenderType.cutout());
+                          RenderTypeLookup.setRenderLayer(DAMAGED_ANCIENT_DEBRIS_1.get(), RenderType.cutout());
+                      });
+                  }
+              }
+          }
+          JAVA
+
+          cat > forge-work/src/main/resources/META-INF/mods.toml <<'TOML'
+          modLoader="javafml"
+          loaderVersion="[36,)"
+          license="All Rights Reserved"
+
+          [[mods]]
+          modId="obsidiantnt"
+          version="1.1.0"
+          displayName="Obsidian TNT"
+          authors="Radel"
+          description='''
+          A tenfold TNT whose blast is absorbed directionally by obsidian-like blocks.
+          Obsidian breaks in one hit, crying obsidian in three hits, and ancient debris in four hits.
+          '''
+
+          [[dependencies.obsidiantnt]]
+          modId="forge"
+          mandatory=true
+          versionRange="[36.2.0,)"
+          ordering="NONE"
+          side="BOTH"
+
+          [[dependencies.obsidiantnt]]
+          modId="minecraft"
+          mandatory=true
+          versionRange="[1.16.5,1.17)"
+          ordering="NONE"
+          side="BOTH"
+          TOML
+
+          cat > forge-work/src/main/resources/pack.mcmeta <<'JSON'
+          {
+            "pack": {
+              "description": "Obsidian TNT resources",
+              "pack_format": 6
+            }
+          }
+          JSON
+
+          cat > forge-work/src/main/resources/assets/obsidiantnt/lang/ru_ru.json <<'JSON'
+          {
+            "block.obsidiantnt.power_tnt": "Супердинамит",
+            "block.obsidiantnt.damaged_crying_obsidian_2": "Плачущий обсидиан — осталось 2",
+            "block.obsidiantnt.damaged_crying_obsidian_1": "Плачущий обсидиан — осталось 1",
+            "block.obsidiantnt.damaged_ancient_debris_3": "Древние обломки — осталось 3",
+            "block.obsidiantnt.damaged_ancient_debris_2": "Древние обломки — осталось 2",
+            "block.obsidiantnt.damaged_ancient_debris_1": "Древние обломки — осталось 1"
+          }
+          JSON
+
+          cat > forge-work/src/main/resources/assets/obsidiantnt/lang/en_us.json <<'JSON'
+          {
+            "block.obsidiantnt.power_tnt": "Super TNT",
+            "block.obsidiantnt.damaged_crying_obsidian_2": "Crying Obsidian — 2 Remaining",
+            "block.obsidiantnt.damaged_crying_obsidian_1": "Crying Obsidian — 1 Remaining",
+            "block.obsidiantnt.damaged_ancient_debris_3": "Ancient Debris — 3 Remaining",
+            "block.obsidiantnt.damaged_ancient_debris_2": "Ancient Debris — 2 Remaining",
+            "block.obsidiantnt.damaged_ancient_debris_1": "Ancient Debris — 1 Remaining"
+          }
+          JSON
+
+          cat > forge-work/src/main/resources/assets/obsidiantnt/blockstates/power_tnt.json <<'JSON'
+          {
+            "variants": {
+              "unstable=false": { "model": "obsidiantnt:block/power_tnt" },
+              "unstable=true":  { "model": "obsidiantnt:block/power_tnt" }
+            }
+          }
+          JSON
+
+          for name in damaged_crying_obsidian_2 damaged_crying_obsidian_1 damaged_ancient_debris_3 damaged_ancient_debris_2 damaged_ancient_debris_1; do
+            cat > "forge-work/src/main/resources/assets/obsidiantnt/blockstates/${name}.json" <<JSON
+          {
+            "variants": {
+              "": { "model": "obsidiantnt:block/${name}" }
+            }
+          }
+          JSON
+          done
+
+          cat > forge-work/src/main/resources/assets/obsidiantnt/models/block/power_tnt.json <<'JSON'
+          {
+            "parent": "minecraft:block/cube_bottom_top",
+            "textures": {
+              "side": "minecraft:block/obsidian",
+              "top": "minecraft:block/tnt_top",
+              "bottom": "minecraft:block/tnt_bottom"
+            }
+          }
+          JSON
+
+          cat > forge-work/src/main/resources/assets/obsidiantnt/models/item/power_tnt.json <<'JSON'
+          {
+            "parent": "obsidiantnt:block/power_tnt"
+          }
+          JSON
+
+          cat > forge-work/src/main/resources/assets/obsidiantnt/models/block/damaged_absorber_template.json <<'JSON'
+          {
+            "ambientocclusion": false,
+            "textures": {
+              "particle": "#side"
+            },
+            "elements": [
+              {
+                "from": [0, 0, 0],
+                "to": [16, 16, 16],
+                "faces": {
+                  "down":  { "texture": "#bottom", "cullface": "down" },
+                  "up":    { "texture": "#top", "cullface": "up" },
+                  "north": { "texture": "#side", "cullface": "north" },
+                  "south": { "texture": "#side", "cullface": "south" },
+                  "west":  { "texture": "#side", "cullface": "west" },
+                  "east":  { "texture": "#side", "cullface": "east" }
+                }
+              },
+              {
+                "from": [-0.01, -0.01, -0.01],
+                "to": [16.01, 16.01, 16.01],
+                "shade": false,
+                "faces": {
+                  "down":  { "uv": [0, 0, 16, 16], "texture": "#digit", "cullface": "down" },
+                  "up":    { "uv": [0, 0, 16, 16], "texture": "#digit", "cullface": "up" },
+                  "north": { "uv": [0, 0, 16, 16], "texture": "#digit", "cullface": "north" },
+                  "south": { "uv": [0, 0, 16, 16], "texture": "#digit", "cullface": "south" },
+                  "west":  { "uv": [0, 0, 16, 16], "texture": "#digit", "cullface": "west" },
+                  "east":  { "uv": [0, 0, 16, 16], "texture": "#digit", "cullface": "east" }
+                }
+              }
+            ]
+          }
+          JSON
+
+          make_model() {
+            local name="$1"
+            local side="$2"
+            local top="$3"
+            local bottom="$4"
+            local digit="$5"
+            cat > "forge-work/src/main/resources/assets/obsidiantnt/models/block/${name}.json" <<JSON
+          {
+            "parent": "obsidiantnt:block/damaged_absorber_template",
+            "textures": {
+              "side": "${side}",
+              "top": "${top}",
+              "bottom": "${bottom}",
+              "digit": "obsidiantnt:block/durability_${digit}"
+            }
+          }
+          JSON
+          }
+
+          make_model damaged_crying_obsidian_2 minecraft:block/crying_obsidian minecraft:block/crying_obsidian minecraft:block/crying_obsidian 2
+          make_model damaged_crying_obsidian_1 minecraft:block/crying_obsidian minecraft:block/crying_obsidian minecraft:block/crying_obsidian 1
+          make_model damaged_ancient_debris_3 minecraft:block/ancient_debris_side minecraft:block/ancient_debris_top minecraft:block/ancient_debris_top 3
+          make_model damaged_ancient_debris_2 minecraft:block/ancient_debris_side minecraft:block/ancient_debris_top minecraft:block/ancient_debris_top 2
+          make_model damaged_ancient_debris_1 minecraft:block/ancient_debris_side minecraft:block/ancient_debris_top minecraft:block/ancient_debris_top 1
+
+          cat > forge-work/src/main/resources/data/obsidiantnt/recipes/power_tnt.json <<'JSON'
+          {
+            "type": "minecraft:crafting_shaped",
+            "pattern": [
+              "OOO",
+              "OTO",
+              "OOO"
+            ],
+            "key": {
+              "O": { "item": "minecraft:obsidian" },
+              "T": { "item": "minecraft:tnt" }
+            },
+            "result": {
+              "item": "obsidiantnt:power_tnt",
+              "count": 1
+            }
+          }
+          JSON
+
+          make_loot() {
+            local name="$1"
+            local item="$2"
+            cat > "forge-work/src/main/resources/data/obsidiantnt/loot_tables/blocks/${name}.json" <<JSON
+          {
+            "type": "minecraft:block",
+            "pools": [
+              {
+                "rolls": 1,
+                "entries": [
+                  { "type": "minecraft:item", "name": "${item}" }
+                ],
+                "conditions": [
+                  { "condition": "minecraft:survives_explosion" }
+                ]
+              }
+            ]
+          }
+          JSON
+          }
+
+          make_loot power_tnt obsidiantnt:power_tnt
+          make_loot damaged_crying_obsidian_2 minecraft:crying_obsidian
+          make_loot damaged_crying_obsidian_1 minecraft:crying_obsidian
+          make_loot damaged_ancient_debris_3 minecraft:ancient_debris
+          make_loot damaged_ancient_debris_2 minecraft:ancient_debris
+          make_loot damaged_ancient_debris_1 minecraft:ancient_debris
+
+          python3 <<'PY'
+          import struct, zlib
+          from pathlib import Path
+
+          out = Path('forge-work/src/main/resources/assets/obsidiantnt/textures/block')
+          out.mkdir(parents=True, exist_ok=True)
+
+          glyphs = {
+              '1': [
+                  '010',
+                  '110',
+                  '010',
+                  '010',
+                  '111',
+              ],
+              '2': [
+                  '111',
+                  '001',
+                  '111',
+                  '100',
+                  '111',
+              ],
+              '3': [
+                  '111',
+                  '001',
+                  '111',
+                  '001',
+                  '111',
+              ],
+          }
+
+          def write_png(path, pixels, width=16, height=16):
+              raw = bytearray()
+              for y in range(height):
+                  raw.append(0)
+                  for x in range(width):
+                      raw.extend(pixels[y][x])
+              def chunk(kind, data):
+                  return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+              png = b'\x89PNG\r\n\x1a\n'
+              png += chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0))
+              png += chunk(b'IDAT', zlib.compress(bytes(raw), 9))
+              png += chunk(b'IEND', b'')
+              path.write_bytes(png)
+
+          for digit, glyph in glyphs.items():
+              canvas = [[(0, 0, 0, 0) for _ in range(16)] for _ in range(16)]
+              scale = 2
+              ox, oy = 5, 3
+              cells = []
+              for gy, row in enumerate(glyph):
+                  for gx, value in enumerate(row):
+                      if value == '1':
+                          for sy in range(scale):
+                              for sx in range(scale):
+                                  cells.append((ox + gx * scale + sx, oy + gy * scale + sy))
+              # pale outline so the black number stays readable on both textures
+              for x, y in cells:
+                  for dx, dy in ((-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,-1),(-1,1),(1,1)):
+                      nx, ny = x + dx, y + dy
+                      if 0 <= nx < 16 and 0 <= ny < 16:
+                          canvas[ny][nx] = (235, 235, 235, 235)
+              for x, y in cells:
+                  canvas[y][x] = (10, 10, 10, 255)
+              write_png(out / f'durability_{digit}.png', canvas)
+          PY
+
+          chmod +x forge-work/gradlew
+          cd forge-work
+          ./gradlew clean build --no-daemon --stacktrace
+          cd ..
+
+          JAR="$(find forge-work/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' ! -name '*javadoc*' | head -n 1)"
+          test -n "$JAR"
+          cp "$JAR" ObsidianTNT-1.16.5-1.1.0.jar
+          jar tf ObsidianTNT-1.16.5-1.1.0.jar | grep -q 'com/radel/obsidiantnt/ObsidianTNTMod.class'
+          jar tf ObsidianTNT-1.16.5-1.1.0.jar | grep -q 'META-INF/mods.toml'
+
+      - name: Upload ready mod JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: ObsidianTNT-1.16.5-1.1.0
+          path: ObsidianTNT-1.16.5-1.1.0.jar
+          if-no-files-found: error
