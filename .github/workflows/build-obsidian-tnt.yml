@@ -23,14 +23,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Restore the earlier embedded v1.1.0 source-builder on disk. The
-          # temporary v1.2.0 builder reads it to recreate the complete project.
           git fetch origin obsidian-tnt-build-20260805 --depth=1
           git show FETCH_HEAD:.github/workflows/build-obsidian-tnt.yml > /tmp/build-v110.yml
           cp /tmp/build-v110.yml .github/workflows/build-obsidian-tnt.yml
 
-          # Read the temporary v1.2.0 builder from the default branch and run
-          # its two shell stages in order.
           git fetch origin master --depth=1
           git show FETCH_HEAD:.github/workflows/build-obsidian-v120-pr.yml > /tmp/build-v120.yml
 
@@ -55,10 +51,10 @@ jobs:
                       break
                   if line.startswith('          '):
                       lines.append(line[10:])
-                  elif not line.strip():
-                      lines.append('')
                   else:
-                      break
+                      # Some embedded Python triple-quote delimiters in the
+                      # stored builder intentionally begin at column zero.
+                      lines.append(line)
               script = Path(f'/tmp/v120-step-{index}.sh')
               script.write_text('\n'.join(lines) + '\n')
               subprocess.run(['bash', str(script)], check=True)
