@@ -43,18 +43,19 @@ PY
 
 python - <<'PY'
 from pathlib import Path
+import re
 
 java = Path('forge-work/src/main/java/com/radel/obsidiantnt/ObsidianTNTMod.java')
 source = java.read_text()
-needle = '                  ENTITIES.register(bus);\n'
-insert = needle + '''
-                  // Direct listener registration fixes old Forge + OptiFine
-                  // launchers skipping the nested automatic subscriber.
-                  bus.addListener(ClientEvents::onClientSetup);
-'''
-if needle not in source:
-    raise RuntimeError('ENTITIES registration anchor not found')
-source = source.replace(needle, insert, 1)
+pattern = r'(?m)^(\s*)ENTITIES\.register\(bus\);\s*$'
+replacement = r'''\1ENTITIES.register(bus);
+
+\1// Direct listener registration fixes old Forge + OptiFine
+\1// launchers skipping the nested automatic subscriber.
+\1bus.addListener(ClientEvents::onClientSetup);'''
+source, count = re.subn(pattern, replacement, source, count=1)
+if count != 1:
+    raise RuntimeError('ENTITIES registration regex did not match')
 java.write_text(source)
 
 properties = Path('forge-work/gradle.properties')
