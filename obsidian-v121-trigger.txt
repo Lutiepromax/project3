@@ -1,2 +1,3 @@
-Build requested: 2026-08-05T23:28:00+03:00
+Build requested: 2026-08-05T23:31:00+03:00
 Fix: direct client renderer registration for old Forge + OptiFine launcher.
+Retry: 1
