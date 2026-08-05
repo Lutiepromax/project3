@@ -1,0 +1,44 @@
+name: Temporary Obsidian TNT PR Build
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17 for Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Execute embedded build script
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/build-obsidian-tnt.yml').read_text(encoding='utf-8').splitlines()
+          start = next(i for i, line in enumerate(source) if line == '        run: |') + 1
+          end = next(i for i in range(start, len(source)) if source[i].startswith('      - name: Upload ready mod JAR'))
+          script_lines = []
+          for line in source[start:end]:
+              if line.startswith('          '):
+                  script_lines.append(line[10:])
+              else:
+                  script_lines.append(line)
+          Path('/tmp/build-obsidian.sh').write_text('\n'.join(script_lines) + '\n', encoding='utf-8')
+          PY
+          bash /tmp/build-obsidian.sh
+
+      - name: Upload ready mod JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: ObsidianTNT-1.16.5-1.1.0
+          path: ObsidianTNT-1.16.5-1.1.0.jar
+          if-no-files-found: error
