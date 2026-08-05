@@ -46,29 +46,15 @@ from pathlib import Path
 
 java = Path('forge-work/src/main/java/com/radel/obsidiantnt/ObsidianTNTMod.java')
 source = java.read_text()
-
-old = '''              public ObsidianTNTMod() {
-                  IEventBus bus = FMLJavaModLoadingContext.get().getModEventBus();
-                  BLOCKS.register(bus);
-                  ITEMS.register(bus);
-                  ENTITIES.register(bus);
-              }
-'''
-new = '''              public ObsidianTNTMod() {
-                  IEventBus bus = FMLJavaModLoadingContext.get().getModEventBus();
-                  BLOCKS.register(bus);
-                  ITEMS.register(bus);
-                  ENTITIES.register(bus);
-
+needle = '                  ENTITIES.register(bus);\n'
+insert = needle + '''
                   // Direct listener registration fixes old Forge + OptiFine
                   // launchers skipping the nested automatic subscriber.
                   bus.addListener(ClientEvents::onClientSetup);
-              }
 '''
-
-if old not in source:
-    raise RuntimeError('Mod constructor anchor not found')
-source = source.replace(old, new)
+if needle not in source:
+    raise RuntimeError('ENTITIES registration anchor not found')
+source = source.replace(needle, insert, 1)
 java.write_text(source)
 
 properties = Path('forge-work/gradle.properties')
