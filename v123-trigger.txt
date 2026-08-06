@@ -1,0 +1,2 @@
+Build requested: 2026-08-06T13:21:00+03:00
+Fix: cancel vanilla TNT explosion and replace it through ExplosionEvent.Start with strength 40.
