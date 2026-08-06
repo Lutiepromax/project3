@@ -16,10 +16,11 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.vector.Vector3d;
 import net.minecraft.world.Explosion;
 import net.minecraft.world.World;
-import net.minecraftforge.event.entity.EntityJoinWorldEvent;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.event.entity.EntityJoinWorldEvent;
+import net.minecraftforge.event.world.ExplosionEvent;
+import net.minecraftforge.eventbus.api.EventPriority;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -31,12 +32,13 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Uses the vanilla TNT entity type so Minecraft and OptiFine always use the
- * built-in TNT renderer. The server tracks which vanilla TNT entities are
- * super TNT and replaces their final tick with the custom explosion.
+ * Uses the vanilla TNT entity and renderer. A persistent marker identifies the
+ * mod TNT. Forge's ExplosionEvent is intercepted so the normal strength-4
+ * explosion is cancelled and replaced with the strength-40 explosion.
  */
-@Mod.EventBusSubscriber(modid = ObsidianTNTMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class PowerTNTTracker {
+    public static final PowerTNTTracker INSTANCE = new PowerTNTTracker();
+
     private static final String POWER_TAG = ObsidianTNTMod.MOD_ID + ":power_tnt";
     private static final float STRONG_POWER = 40.0F;
     private static final double ABSORBER_DAMAGE_RADIUS = 4.0D;
@@ -61,7 +63,7 @@ public final class PowerTNTTracker {
     }
 
     @SubscribeEvent
-    public static void onEntityJoin(EntityJoinWorldEvent event) {
+    public void onEntityJoin(EntityJoinWorldEvent event) {
         if (!event.getWorld().isClientSide && event.getEntity() instanceof TNTEntity) {
             TNTEntity tnt = (TNTEntity) event.getEntity();
             if (tnt.getPersistentData().getBoolean(POWER_TAG)) {
@@ -71,7 +73,7 @@ public final class PowerTNTTracker {
     }
 
     @SubscribeEvent
-    public static void onWorldTick(TickEvent.WorldTickEvent event) {
+    public void onWorldTick(TickEvent.WorldTickEvent event) {
         if (event.phase != TickEvent.Phase.START || event.world.isClientSide) {
             return;
         }
@@ -83,14 +85,34 @@ public final class PowerTNTTracker {
                 iterator.remove();
                 continue;
             }
-
             keepSolidHitbox(tnt);
-
-            if (tnt.getFuse() <= 1) {
-                explode(tnt);
-                iterator.remove();
-            }
         }
+    }
+
+    /**
+     * The vanilla TNT code creates a strength-4 explosion after removing the
+     * entity. This event still exposes that TNT as the explosion source. We
+     * cancel that exact explosion and immediately create the strength-40 one.
+     */
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void onExplosionStart(ExplosionEvent.Start event) {
+        Entity source = event.getExplosion().getExploder();
+        if (!(source instanceof TNTEntity)) {
+            return;
+        }
+
+        TNTEntity tnt = (TNTEntity) source;
+        if (!tnt.getPersistentData().getBoolean(POWER_TAG)) {
+            return;
+        }
+
+        event.setCanceled(true);
+
+        // Clear the marker before creating the replacement explosion so the
+        // nested ExplosionEvent is not intercepted recursively.
+        tnt.getPersistentData().remove(POWER_TAG);
+        TRACKED.remove(tnt.getUUID());
+        explodeStrong(tnt);
     }
 
     /** Makes the primed vanilla TNT behave like a solid 0.98 x 0.98 block. */
@@ -122,32 +144,33 @@ public final class PowerTNTTracker {
         }
     }
 
-    private static void explode(TNTEntity tnt) {
+    private static void explodeStrong(TNTEntity tnt) {
+        World world = tnt.level;
         double centerX = tnt.getX();
         double centerY = tnt.getY(0.0625D);
         double centerZ = tnt.getZ();
 
-        List<BlockPos> exposedAbsorbers = findExposedAbsorbers(tnt.level, centerX, centerY, centerZ);
-        Map<Entity, Vector3d> movementBefore = captureMovement(tnt, centerX, centerY, centerZ,
-                STRONG_POWER * 2.0D);
+        List<BlockPos> exposedAbsorbers = findExposedAbsorbers(world, centerX, centerY, centerZ);
+        Map<Entity, Vector3d> movementBefore = captureMovement(
+                world, tnt, centerX, centerY, centerZ, STRONG_POWER * 2.0D
+        );
 
-        tnt.remove();
-        tnt.level.explode(tnt, centerX, centerY, centerZ, STRONG_POWER, Explosion.Mode.BREAK);
+        world.explode(tnt, centerX, centerY, centerZ, STRONG_POWER, Explosion.Mode.BREAK);
         applyTenfoldKnockback(movementBefore);
 
         for (BlockPos pos : exposedAbsorbers) {
-            damageAbsorber(tnt.level, pos);
+            damageAbsorber(world, pos);
         }
     }
 
-    private static Map<Entity, Vector3d> captureMovement(TNTEntity source,
+    private static Map<Entity, Vector3d> captureMovement(World world, Entity source,
                                                           double x, double y, double z,
                                                           double radius) {
         AxisAlignedBB area = new AxisAlignedBB(
                 x - radius, y - radius, z - radius,
                 x + radius, y + radius, z + radius
         );
-        List<Entity> entities = source.level.getEntities(source, area,
+        List<Entity> entities = world.getEntities(source, area,
                 entity -> entity.isAlive() && !entity.ignoreExplosion());
         Map<Entity, Vector3d> result = new IdentityHashMap<>();
         for (Entity entity : entities) {
