@@ -14,6 +14,6 @@ public final class ObsidianTNTMod {
     public ObsidianTNTMod() {
         ModBlocks.BLOCKS.register(FMLJavaModLoadingContext.get().getModEventBus());
         ModItems.ITEMS.register(FMLJavaModLoadingContext.get().getModEventBus());
-        MinecraftForge.EVENT_BUS.register(PowerTNTTracker.class);
+        MinecraftForge.EVENT_BUS.register(PowerTNTTracker.INSTANCE);
     }
 }
